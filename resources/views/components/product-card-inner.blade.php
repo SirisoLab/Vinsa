@@ -25,9 +25,12 @@
                 {{ $productItem->name ?? '' }}
             </p>
             
+            @php
+                $cardType = $productItem->resolvedTypeName() ?? ($ci['tipe'] ?? ($ci['type'] ?? null));
+            @endphp
             <div class="mt-2 space-y-0.5">
-                @if (!empty($ci['type']))
-                    <div class="text-[9px] text-white/50 uppercase">{{ __('Type') }}: {{ Str::limit($ci['type'], 12) }}</div>
+                @if (!empty($cardType))
+                    <div class="text-[9px] text-white/60 uppercase">{{ __('Type') }}: {{ Str::limit($cardType, 14) }}</div>
                 @endif
                 {{-- If it's another field (e.g., custom sizes for cable ties) --}}
                 @if (!empty($ci['size']))

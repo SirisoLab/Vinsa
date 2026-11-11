@@ -24,6 +24,13 @@ $categoryName = $category->name ?? ($product->category->name ?? 'Electrical Comp
 
 $rawAttrs = $productAttributes ?? ($product->attributes ?? []);
 $additionalProperties = [];
+if (method_exists($product, 'resolvedTypeName') && ($resolvedTypeName = $product->resolvedTypeName())) {
+    $additionalProperties[] = [
+        '@type' => 'PropertyValue',
+        'name' => 'Type',
+        'value' => $resolvedTypeName,
+    ];
+}
 if (!empty($rawAttrs)) {
     foreach ($rawAttrs as $attr) {
         $name = is_object($attr) ? ($attr->field_name ?? $attr->name ?? $attr->key ?? '') : ($attr['field_name'] ?? $attr['name'] ?? $attr['key'] ?? '');

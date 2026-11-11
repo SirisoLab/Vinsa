@@ -167,6 +167,9 @@
 
                 <!-- Search Container -->
                 <form method="GET" action="{{ route('products.view.user', $activeCategory ? \Illuminate\Support\Str::slug($activeCategory->name) : null) }}" class="relative max-w-2xl mx-auto group shadow-2xl rounded-3xl" data-aos="fade-up" data-aos-delay="300">
+                    @if(isset($activeType) && $activeType)
+                        <input type="hidden" name="type" value="{{ \Illuminate\Support\Str::slug($activeType->name) }}">
+                    @endif
                     <div class="absolute inset-y-0 left-0 pl-7 flex items-center pointer-events-none">
                         <svg class="h-6 w-6 text-gray-400 group-focus-within:text-[#066C5F] transition-all duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -177,7 +180,7 @@
                         placeholder="{{ __('Search by name or product code...') }}"
                         class="w-full pl-16 pr-28 py-6 rounded-3xl text-xl text-gray-800 bg-white/95 backdrop-blur-sm focus:outline-none focus:ring-4 focus:ring-[#F77F1E]/40 transition-all border-none placeholder-gray-400">
                     @if(request('search'))
-                        <a href="{{ route('products.view.user', $activeCategory ? \Illuminate\Support\Str::slug($activeCategory->name) : null) }}" class="absolute right-14 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-red-500 bg-gray-100 px-3 py-1.5 rounded-full transition-colors">
+                        <a href="{{ route('products.view.user', array_filter(['category' => $activeCategory ? \Illuminate\Support\Str::slug($activeCategory->name) : null, 'type' => isset($activeType) && $activeType ? \Illuminate\Support\Str::slug($activeType->name) : null])) }}" class="absolute right-14 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-red-500 bg-gray-100 px-3 py-1.5 rounded-full transition-colors">
                             ✕ Clear
                         </a>
                     @endif
@@ -215,6 +218,24 @@
                     </div>
                 </div>
 
+                @if ($activeCategory && isset($availableTypes) && $availableTypes->isNotEmpty())
+                    <div class="mb-10 flex flex-wrap items-center gap-2.5 bg-slate-900/15 backdrop-blur-sm border border-white/15 rounded-2xl p-4">
+                        <span class="text-xs font-black text-white uppercase tracking-widest mr-2">
+                            {{ __('Type') }} ({{ __($activeCategory->name) }}):
+                        </span>
+                        <a href="{{ route('products.view.user', array_filter(['category' => \Illuminate\Support\Str::slug($activeCategory->name), 'search' => request('search')])) }}"
+                           class="whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm {{ !$activeTypeId ? 'bg-[#F77F1E] text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-50' }}">
+                            {{ __('All Types') }}
+                        </a>
+                        @foreach ($availableTypes as $typeOption)
+                            <a href="{{ route('products.view.user', array_filter(['category' => \Illuminate\Support\Str::slug($activeCategory->name), 'type' => \Illuminate\Support\Str::slug($typeOption->name), 'search' => request('search')])) }}"
+                               class="whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm {{ $activeTypeId == $typeOption->id ? 'bg-[#F77F1E] text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-50' }}">
+                                {{ __($typeOption->name) }}
+                            </a>
+                        @endforeach
+                    </div>
+                @endif
+
                 <!-- Product Grid -->
                 <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
                     @forelse ($products as $product)
@@ -223,6 +244,7 @@
                             if (!empty($product->custom_input)) {
                                 $customInput = json_decode($product->custom_input, true);
                             }
+                            $resolvedTypeName = $product->resolvedTypeName();
                         @endphp
                         <div class="product-card group relative bg-white rounded-[32px] shadow-[0_10px_30px_rgba(0,0,0,0.03)] hover:shadow-[0_20px_60px_rgba(6,108,95,0.12)] transition-all duration-500 overflow-hidden border border-gray-50 flex flex-col h-full" 
                              data-category-id="{{ $product->category_id }}" 
@@ -266,14 +288,24 @@
 
                                     <!-- Technical Details Pills -->
                                     <div class="flex flex-wrap gap-2">
+                                        @php $pillCount = 0; @endphp
+                                        @if ($resolvedTypeName)
+                                            <span class="px-3 py-1 bg-[#066C5F]/10 rounded-lg text-[10px] font-bold text-[#066C5F] border border-[#066C5F]/20">
+                                                {{ __('Type') }}: {{ \Illuminate\Support\Str::limit(__($resolvedTypeName), 18) }}
+                                            </span>
+                                            @php $pillCount++; @endphp
+                                        @endif
                                         @if ($customInput && is_array($customInput))
-                                            @php $count = 0; @endphp
                                             @foreach ($customInput as $key => $value)
-                                                @if($count < 3 && !empty($value))
+                                                @php
+                                                    $isDuplicateTypeKey = $resolvedTypeName && in_array(strtolower($key), ['tipe', 'type', 'value'], true)
+                                                        && strtolower((string) ($product->category?->name ?? '')) !== 'cable tray';
+                                                @endphp
+                                                @if($pillCount < 3 && !empty($value) && !$isDuplicateTypeKey)
                                                     <span class="px-3 py-1 bg-gray-50 rounded-lg text-[10px] font-bold text-gray-500 border border-gray-100">
                                                         {{ __(ucfirst($key)) }}: {{ \Illuminate\Support\Str::limit(__((string)$value), 15) }}
                                                     </span>
-                                                    @php $count++; @endphp
+                                                    @php $pillCount++; @endphp
                                                 @endif
                                             @endforeach
                                         @endif

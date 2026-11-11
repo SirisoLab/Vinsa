@@ -31,8 +31,12 @@ class NewController extends Controller
         // Cache categories & homepage products tree (1 hour) to eliminate DB load
         $categories = Cache::remember('homepage_categories_tree', 3600, function () {
             $allCategories = Category::with([
+                'types' => function ($q) {
+                    $q->select('id', 'category_id', 'name')->reorder('id', 'asc');
+                },
                 'products' => function ($q) {
-                    $q->select('id', 'name', 'slug', 'kode', 'image', 'category_id', 'custom_input');
+                    $q->select('id', 'name', 'slug', 'kode', 'image', 'category_id', 'type_id', 'custom_input')
+                        ->with('type:id,category_id,name');
                 }
             ])->get(['id', 'name']);
 

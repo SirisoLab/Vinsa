@@ -25,13 +25,27 @@
             </div>
         </div>
 
+        <!-- Flash Alerts -->
+        @if (session('success'))
+            <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl flex items-center gap-3 font-semibold text-sm">
+                <svg class="w-5 h-5 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span>{{ session('success') }}</span>
+            </div>
+        @endif
+        @if (session('error'))
+            <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl flex items-center gap-3 font-semibold text-sm">
+                <svg class="w-5 h-5 text-rose-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span>{{ session('error') }}</span>
+            </div>
+        @endif
+
         <!-- Horizontal List Container -->
         <div class="space-y-4">
             <!-- List Header (Desktop Only) -->
             <div class="hidden lg:grid grid-cols-12 gap-4 px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                 <div class="col-span-1">Preview</div>
                 <div class="col-span-4">Product Details</div>
-                <div class="col-span-2">Category</div>
+                <div class="col-span-2">Category &amp; Type</div>
                 <div class="col-span-2">Ref Code</div>
                 <div class="col-span-2">Attributes</div>
                 <div class="col-span-1 text-right">Action</div>
@@ -41,14 +55,15 @@
                 @php
                     $details = json_decode($product->custom_input, true);
                     $isJson = (json_last_error() == JSON_ERROR_NONE && is_array($details));
-                    
+                    $resolvedTypeName = $product->resolvedTypeName();
+
                     $detailString = '';
                     if ($isJson) {
                         $detailString = implode(' ', array_keys($details)) . ' ' . implode(' ', array_values($details));
                     } else {
                         $detailString = $product->custom_input ?? '';
                     }
-                    $searchContext = Str::lower($product->name . ' ' . $product->kode . ' ' . $detailString . ' ' . ($product->category->name ?? ''));
+                    $searchContext = Str::lower($product->name . ' ' . $product->kode . ' ' . $detailString . ' ' . ($product->category->name ?? '') . ' ' . ($resolvedTypeName ?? ''));
                 @endphp
                 <div x-show="{{ json_encode($searchContext) }}.includes(search.toLowerCase())"
                     x-transition:enter="transition ease-out duration-300"
@@ -75,12 +90,19 @@
                             <p class="text-[10px] font-bold text-slate-400 mt-0.5 truncate">{{ Str::limit($product->description, 60) }}</p>
                         </div>
 
-                        <!-- Category -->
-                        <div class="col-span-2 mb-4 lg:mb-0 relative">
-                            <span class="lg:hidden text-[8px] font-black text-slate-400 uppercase block mb-1">Category</span>
+                        <!-- Category & Type -->
+                        <div class="col-span-2 mb-4 lg:mb-0 relative space-y-1">
+                            <span class="lg:hidden text-[8px] font-black text-slate-400 uppercase block mb-1">Category &amp; Type</span>
                             <span class="inline-flex px-3 py-1 bg-slate-50 text-[#F77F1E] rounded-full text-[9px] font-black uppercase tracking-widest border border-slate-100">
                                 {{ $product->category->name ?? 'Product' }}
                             </span>
+                            @if ($resolvedTypeName)
+                                <div class="block">
+                                    <span class="inline-flex px-2.5 py-0.5 bg-[#066c5f]/10 text-[#066c5f] rounded-full text-[9px] font-bold tracking-wide">
+                                        Type: {{ $resolvedTypeName }}
+                                    </span>
+                                </div>
+                            @endif
                         </div>
 
                         <!-- Ref Code -->
@@ -95,9 +117,11 @@
                             <div class="flex flex-wrap gap-1.5">
                                 @if($product->custom_input)
                                     @if($isJson)
+                                        @php $hasRenderedAttr = false; @endphp
                                         @foreach($details as $key => $value)
-                                            @if(!empty($value))
+                                            @if(!empty($value) && !($product->type_id && in_array(strtolower($key), ['tipe', 'type'], true)))
                                                 @php
+                                                    $hasRenderedAttr = true;
                                                     $label = match(strtolower($key)) {
                                                         'tipe' => 'Type',
                                                         'series' => 'Series',
@@ -110,10 +134,13 @@
                                                 </div>
                                             @endif
                                         @endforeach
+                                        @if(!$hasRenderedAttr && !$resolvedTypeName)
+                                            <span class="text-[10px] text-slate-300 italic">No extra data</span>
+                                        @endif
                                     @else
                                         <p class="text-[10px] font-bold text-slate-500 italic">{{ Str::limit($product->custom_input, 30) }}</p>
                                     @endif
-                                @else
+                                @elseif(!$resolvedTypeName)
                                     <span class="text-[10px] text-slate-300 italic">No extra data</span>
                                 @endif
                             </div>

@@ -4,6 +4,7 @@ namespace App\Imports;
 
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\Type;
 use App\Models\ProductAtribute;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\ToCollection;
@@ -26,15 +27,31 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
      */
     protected array $categoryCache = [];
 
+    /**
+     * In-memory cache for "categoryId|lowercase_type" => id
+     * @var array<string, int>
+     */
+    protected array $typeCache = [];
+
     public function __construct()
     {
-        // Preload existing categories into memory cache
+        // Preload existing categories & types into memory cache
         try {
             $this->categoryCache = Category::pluck('id', 'name')
                 ->mapWithKeys(fn($id, $name) => [strtolower(trim($name)) => $id])
                 ->all();
         } catch (\Throwable $e) {
             $this->categoryCache = [];
+        }
+
+        try {
+            $this->typeCache = Type::all(['id', 'category_id', 'name'])
+                ->mapWithKeys(fn($type) => [
+                    $type->category_id . '|' . strtolower(trim($type->name)) => $type->id,
+                ])
+                ->all();
+        } catch (\Throwable $e) {
+            $this->typeCache = [];
         }
     }
 
@@ -68,7 +85,8 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
         // Process this chunk within a DB transaction for maximum speed & atomicity
         DB::transaction(function () use ($validRows, $kodes) {
             // Pre-fetch existing products in this chunk with 1 single query
-            $existingProducts = Product::whereIn('kode', $kodes)
+            $existingProducts = Product::with('category:id,name')
+                ->whereIn('kode', $kodes)
                 ->get()
                 ->keyBy('kode');
 
@@ -80,6 +98,8 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
                 $name = trim((string)$row['name']);
 
                 try {
+                    $existingProduct = $existingProducts->get($kode);
+
                     // Resolve Category ID using cache
                     $categoryId = null;
                     if (!empty($row['category'])) {
@@ -89,9 +109,31 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
                         if (isset($this->categoryCache[$catKey])) {
                             $categoryId = $this->categoryCache[$catKey];
                         } else {
-                            $category = Category::firstOrCreate(['name' => $catName]);
+                            $category = Category::whereRaw('LOWER(name) = ?', [$catKey])->first()
+                                ?? Category::create(['name' => $catName]);
                             $this->categoryCache[$catKey] = $category->id;
                             $categoryId = $category->id;
+                        }
+                    }
+
+                    $effectiveCategoryId = $categoryId ?? $existingProduct?->category_id;
+                    $rawTypeName = isset($row['type']) ? trim((string)$row['type']) : '';
+                    $typeId = null;
+
+                    if ($effectiveCategoryId && $rawTypeName !== '') {
+                        $typeKey = $effectiveCategoryId . '|' . strtolower($rawTypeName);
+                        if (isset($this->typeCache[$typeKey])) {
+                            $typeId = $this->typeCache[$typeKey];
+                        } else {
+                            $typeModel = Type::where('category_id', $effectiveCategoryId)
+                                ->whereRaw('LOWER(name) = ?', [strtolower($rawTypeName)])
+                                ->first()
+                                ?? Type::create([
+                                    'category_id' => $effectiveCategoryId,
+                                    'name' => $rawTypeName,
+                                ]);
+                            $this->typeCache[$typeKey] = $typeModel->id;
+                            $typeId = $typeModel->id;
                         }
                     }
 
@@ -103,16 +145,20 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
                     // Parse specifications
                     $specifications = $this->parseSpecifications($row['specifications'] ?? null);
 
-                    // Build custom input JSON
+                    $effectiveCategoryName = !empty($row['category'])
+                        ? (string)$row['category']
+                        : ($existingProduct?->category?->name ?? null);
+
+                    // Build custom input JSON (series kept in custom_input; type fallback only if no master type_id resolved)
                     $customInput = $this->buildCustomInput(
-                        $row['category'] ?? null,
-                        $row['type'] ?? null,
+                        $effectiveCategoryName,
+                        $typeId === null ? ($row['type'] ?? null) : null,
                         $row['series'] ?? null
                     );
 
-                    $existingProduct = $existingProducts->get($kode);
-
                     if ($existingProduct) {
+                        $categoryChanged = $categoryId !== null && (int)$categoryId !== (int)$existingProduct->category_id;
+
                         // Update existing product
                         $updateData = [
                             'name' => $name,
@@ -122,6 +168,12 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
                             'meta_title' => $row['meta_title'] ?? $existingProduct->meta_title,
                             'meta_description' => $row['meta_description'] ?? $existingProduct->meta_description,
                         ];
+
+                        if ($typeId !== null) {
+                            $updateData['type_id'] = $typeId;
+                        } elseif ($categoryChanged) {
+                            $updateData['type_id'] = null;
+                        }
 
                         if ($customInput !== null) {
                             $updateData['custom_input'] = $customInput;
@@ -161,6 +213,7 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
                             'description'      => $row['description'] ?? null,
                             'stock'            => $row['stock'] ?? 0,
                             'category_id'      => $categoryId,
+                            'type_id'          => $typeId,
                             'custom_input'     => $customInput,
                             'meta_title'       => $row['meta_title'] ?? null,
                             'meta_description' => $row['meta_description'] ?? null,
@@ -222,54 +275,35 @@ class ProductsImport implements ToCollection, WithHeadingRow, WithChunkReading
      */
     private function buildCustomInput(?string $categoryName, ?string $type, ?string $series): ?string
     {
-        if (empty($type) && empty($series)) {
+        $type = $type !== null ? trim($type) : '';
+        $series = $series !== null ? trim($series) : '';
+
+        if ($type === '' && $series === '') {
             return null;
         }
 
         $categoryName = strtolower(trim($categoryName ?? ''));
 
-        // Categories that store both 'tipe' and 'series'
-        $typeAndSeriesCategories = [
-            'push button',
-            'selector switch',
-            'cable lug',
-            'mccb',
-            'mccb accessories',
-            'contactor accessories',
-            'terminal block',
-        ];
-
-        foreach ($typeAndSeriesCategories as $cat) {
-            if (str_contains($categoryName, $cat)) {
-                return json_encode([
-                    'tipe' => $type ?? '',
-                    'series' => $series ?? '',
-                ]);
-            }
-        }
-
         // Cable tray stores series as 'value'
         if ($categoryName === 'cable tray') {
-            return json_encode([
-                'value' => $series ?: $type ?? '',
-            ]);
+            $val = $series !== '' ? $series : $type;
+            return $val !== '' ? json_encode(['value' => $val]) : null;
         }
 
-        // Pilot lamp and accessories store type as 'value'
-        if (in_array($categoryName, ['pilot lamp', 'accessories'])) {
-            return json_encode([
-                'value' => $type ?: $series ?? '',
-            ]);
+        // Pilot lamp and accessories store legacy type as 'value' when no master type_id exists
+        if (in_array($categoryName, ['pilot lamp', 'accessories']) && $series === '') {
+            return $type !== '' ? json_encode(['value' => $type]) : null;
         }
 
-        if (!empty($type) || !empty($series)) {
-            return json_encode([
-                'tipe' => $type ?? '',
-                'series' => $series ?? '',
-            ]);
+        $payload = [];
+        if ($type !== '') {
+            $payload['tipe'] = $type;
+        }
+        if ($series !== '') {
+            $payload['series'] = $series;
         }
 
-        return null;
+        return !empty($payload) ? json_encode($payload) : null;
     }
 
     /**

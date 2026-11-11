@@ -16,6 +16,27 @@
                 </a>
             </div>
 
+            @if (session('success'))
+                <div class="mb-6 p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl flex items-center gap-3 font-semibold text-sm">
+                    <svg class="w-5 h-5 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span>{{ session('success') }}</span>
+                </div>
+            @endif
+
+            @if ($errors->any())
+                <div class="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl">
+                    <div class="flex items-center gap-3 text-rose-600 font-bold mb-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Please correct the following errors:
+                    </div>
+                    <ul class="list-disc list-inside text-sm text-rose-500 font-medium space-y-1">
+                        @foreach ($errors->all() as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
+
             <form action="{{ route('products.store') }}" method="POST" enctype="multipart/form-data" class="space-y-10">
                 @csrf
                 
@@ -102,7 +123,7 @@
                                     </div>
                                     <textarea name="meta_description" id="meta_description" rows="4"
                                         class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#F77F1E] font-semibold"
-                                        maxlength="500" placeholder="Meta description for search engine results..."></textarea>
+                                        maxlength="500" placeholder="Meta description for search engine results...">{{ old('meta_description') }}</textarea>
                                 </div>
                             </div>
                         </div>
@@ -111,19 +132,51 @@
                     <!-- Right Column: Media & Category -->
                     <div class="space-y-6">
                         <!-- Category Section -->
+                        @php
+                            $categoryTypesMap = $categories->mapWithKeys(fn ($c) => [
+                                (string) $c->id => [
+                                    'name' => $c->name,
+                                    'manageUrl' => route('categories.show', $c),
+                                    'types' => $c->types->map(fn ($t) => [
+                                        'id' => $t->id,
+                                        'name' => $t->name,
+                                    ])->values(),
+                                ],
+                            ])->all();
+                        @endphp
                         <div class="bg-white rounded-[2rem] p-8 border border-slate-200 shadow-sm space-y-6">
                             <h2 class="text-xl font-black text-slate-900">Classification</h2>
                             <div class="space-y-4">
                                 <div class="space-y-2">
-                                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest pl-1">Category</label>
+                                    <label for="categorySelect" class="block text-xs font-black text-slate-500 uppercase tracking-widest pl-1">Category</label>
                                     <select name="category_id" id="categorySelect" required 
                                             class="w-full px-5 py-3 bg-slate-100 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold appearance-none">
                                         <option value="">Choose a category</option>
                                         @foreach ($categories as $category)
-                                            <option value="{{ $category->id }}">{{ $category->name }}</option>
+                                            <option value="{{ $category->id }}" data-name="{{ strtolower($category->name) }}" {{ (string) old('category_id') === (string) $category->id ? 'selected' : '' }}>
+                                                {{ $category->name }}
+                                            </option>
                                         @endforeach
                                     </select>
                                 </div>
+
+                                <div class="space-y-2">
+                                    <div class="flex items-center justify-between pl-1">
+                                        <label for="typeSelect" class="block text-xs font-black text-slate-500 uppercase tracking-widest">Type</label>
+                                        <a id="manageCategoryTypesLink" href="{{ route('categories.index') }}" target="_blank"
+                                           class="hidden text-[10px] font-black text-[#066c5f] hover:text-[#F77F1E] uppercase tracking-wider transition-colors">
+                                            Kelola Type &rarr;
+                                        </a>
+                                    </div>
+                                    <select name="type_id" id="typeSelect" disabled
+                                            class="w-full px-5 py-3 bg-slate-100 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold appearance-none disabled:opacity-60">
+                                        <option value="">Pilih category terlebih dahulu</option>
+                                    </select>
+                                    <p id="typeHelperText" class="text-[11px] font-medium text-slate-400 pl-1">
+                                        Pilihan type otomatis mengikuti category yang dipilih.
+                                    </p>
+                                </div>
+
                                 <div id="category-extra" class="space-y-4 animate-in fade-in duration-300"></div>
                             </div>
                         </div>
@@ -299,13 +352,62 @@
             }
 
             const categorySelect = document.getElementById('categorySelect');
+            const typeSelect = document.getElementById('typeSelect');
+            const typeHelperText = document.getElementById('typeHelperText');
+            const manageTypesLink = document.getElementById('manageCategoryTypesLink');
             const extraContainer = document.getElementById('category-extra');
+            const categoryTypesMap = @json($categoryTypesMap);
+            const oldCategoryId = @json((string) old('category_id', ''));
+            const oldTypeId = @json((string) old('type_id', ''));
 
-            categorySelect.addEventListener('change', function() {
-                const selectedCategory = this.options[this.selectedIndex].text.toLowerCase().trim();
+            function populateTypeOptions(categoryId, preserveOldSelection = false) {
+                if (!categoryId || !categoryTypesMap[categoryId]) {
+                    typeSelect.innerHTML = '<option value="">Pilih category terlebih dahulu</option>';
+                    typeSelect.disabled = true;
+                    typeHelperText.textContent = 'Pilihan type otomatis mengikuti category yang dipilih.';
+                    manageTypesLink.classList.add('hidden');
+                    return;
+                }
+
+                const catData = categoryTypesMap[categoryId];
+                const types = catData.types || [];
+                manageTypesLink.href = catData.manageUrl;
+                manageTypesLink.classList.remove('hidden');
+
+                if (types.length === 0) {
+                    typeSelect.innerHTML = '<option value="">Belum ada type di category ini (opsional)</option>';
+                    typeSelect.disabled = false;
+                    typeHelperText.textContent = 'Category ini belum memiliki Master Type. Klik "Kelola Type" untuk menambahkan.';
+                    return;
+                }
+
+                typeSelect.disabled = false;
+                typeHelperText.textContent = `${types.length} type tersedia di dalam category ${catData.name}.`;
+
+                const placeholderOpt = document.createElement('option');
+                placeholderOpt.value = '';
+                placeholderOpt.textContent = 'Pilih Type (Opsional)';
+                typeSelect.innerHTML = '';
+                typeSelect.appendChild(placeholderOpt);
+
+                types.forEach(typeItem => {
+                    const opt = document.createElement('option');
+                    opt.value = String(typeItem.id);
+                    opt.textContent = typeItem.name;
+                    if (preserveOldSelection && String(typeItem.id) === oldTypeId) {
+                        opt.selected = true;
+                    }
+                    typeSelect.appendChild(opt);
+                });
+            }
+
+            function renderCategorySeriesFields(selectedCategory) {
                 extraContainer.innerHTML = '';
 
-                // Extra Fields with Modern Styling
+                if (!selectedCategory) {
+                    return;
+                }
+
                 const fieldWrap = (label, input) => `
                     <div class="space-y-2 animate-in fade-in slide-in-from-top-2">
                         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">${label}</label>
@@ -315,47 +417,45 @@
 
                 const selectStyled = (name, options) => `
                     <select name="${name}" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold">
+                        <option value="">Pilih Series (Opsional)</option>
                         ${options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
                     </select>
-                `;
-
-                const inputStyled = (name, placeholder) => `
-                    <input type="text" name="${name}" placeholder="${placeholder}" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold">
                 `;
 
                 if (selectedCategory === 'cable tray') {
                     extraContainer.innerHTML = fieldWrap('U & C Series', selectStyled('uc_series', ['U Series', 'C Series']));
                 } else if (selectedCategory.includes('push button')) {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('push_button_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('push_button_series', ['KB 2 Series', 'KB 5 Series']));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('push_button_series', ['KB 2 Series', 'KB 5 Series']));
                 } else if (selectedCategory.includes('selector switch')) {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('selector_switch_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('selector_switch_series', ['KB 2 Series', 'KB 5 Series']));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('selector_switch_series', ['KB 2 Series', 'KB 5 Series']));
                 } else if (selectedCategory === 'terminal block') {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('terminal_block_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('terminal_block_series', ['Terminal Strip', 'Terminal Block TB', 'Terminal Block TBC', 'Terminal Block TBR', 'Terminal Block TUK', 'Terminal Block TUSLKG', 'Terminal Block KLUS']));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('terminal_block_series', ['Terminal Strip', 'Terminal Block TB', 'Terminal Block TBC', 'Terminal Block TBR', 'Terminal Block TUK', 'Terminal Block TUSLKG', 'Terminal Block KLUS']));
                 } else if (selectedCategory === 'cable lug') {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('cable_lug_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('cable_lug_series', ['SC Cable Lug', 'SV Cable Lug', 'RV Cable Lug', 'PTV Cable Lug', 'DBV Cable Lug']));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('cable_lug_series', ['SC Cable Lug', 'SV Cable Lug', 'RV Cable Lug', 'PTV Cable Lug', 'DBV Cable Lug']));
                 } else if (selectedCategory === 'mccb') {
                     extraContainer.innerHTML = fieldWrap('Series', selectStyled('mccb_series', ['M12B 25kA', 'M16F 35kA', 'M25F 35kA', 'M40F 35kA', 'M63F 35kA', 'M80F 35kA']));
                 } else if (selectedCategory === 'mccb accessories') {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('mccb_accessories_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('mccb_accessories_series', ['MAA Alarm Contact', 'MAS Shunt Release', 'MAAUX Auxiliary Contact', 'MAUVT Under Voltage', 'MARH Extended Rotary Handle']));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('mccb_accessories_series', ['MAA Alarm Contact', 'MAS Shunt Release', 'MAAUX Auxiliary Contact', 'MAUVT Under Voltage', 'MARH Extended Rotary Handle']));
                 } else if (selectedCategory === 'contactor accessories') {
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', inputStyled('contactor_accessories_type', 'Enter type...')) +
-                        fieldWrap('Series', selectStyled('contactor_accessories_series', ['Coil Contactor', 'Auxiliary Contact', 'Time Delay', 'Thermal Overload relay']));
-                } else if (selectedCategory === 'pilot lamp') {
-                    extraContainer.innerHTML = fieldWrap('Type', inputStyled('pilot_lamp_type', 'Enter type...'));
-                } else if (selectedCategory === 'accessories') {
-                    extraContainer.innerHTML = fieldWrap('Type', inputStyled('accessories_type', 'Enter type...'));
+                    extraContainer.innerHTML = fieldWrap('Series', selectStyled('contactor_accessories_series', ['Coil Contactor', 'Auxiliary Contact', 'Time Delay', 'Thermal Overload relay']));
                 }
+            }
+
+            const handleCategoryChange = (preserveOld = false) => {
+                const selectedOpt = categorySelect.options[categorySelect.selectedIndex];
+                const categoryId = categorySelect.value;
+                const selectedCategoryName = (selectedOpt?.dataset?.name || '').toLowerCase().trim();
+
+                populateTypeOptions(categoryId, preserveOld && categoryId === oldCategoryId);
+                renderCategorySeriesFields(selectedCategoryName);
+            };
+
+            if (categorySelect.value) {
+                handleCategoryChange(true);
+            }
+
+            categorySelect.addEventListener('change', function () {
+                handleCategoryChange(false);
             });
         });
     </script>

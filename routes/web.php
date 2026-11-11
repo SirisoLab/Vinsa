@@ -3,6 +3,7 @@
 use App\Http\Controllers\AboutController;
 use App\Http\Controllers\BlogController;
 use App\Http\Controllers\CarouselController;
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\NewController;
 use App\Http\Controllers\ProductController;
@@ -10,6 +11,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\LocaleController;
 use App\Http\Controllers\SliderController;
 use App\Http\Controllers\SitemapController;
+use App\Http\Controllers\TypeController;
 use App\Models\Blog;
 use Illuminate\Support\Facades\Route;
 
@@ -50,6 +52,20 @@ Route::middleware('auth')->group(function () {
     Route::get('/products/{id}/edit', [ProductController::class, 'editView'])->name('products.editss');
     Route::put('/products/{id}', [ProductController::class, 'update'])->name('products.update');
     Route::delete('/products/{id}', [ProductController::class, 'destroy'])->name('products.destroy');
+
+    // Master Category & Type Routes (Type belongs inside Category)
+    Route::get('/admin/categories', [CategoryController::class, 'index'])->name('categories.index');
+    Route::post('/admin/categories', [CategoryController::class, 'store'])->name('categories.store');
+    Route::get('/admin/categories/{category}', [CategoryController::class, 'show'])->name('categories.show');
+    Route::put('/admin/categories/{category}', [CategoryController::class, 'update'])->name('categories.update');
+    Route::delete('/admin/categories/{category}', [CategoryController::class, 'destroy'])->name('categories.destroy');
+    Route::post('/admin/categories/{category}/types', [TypeController::class, 'storeForCategory'])->name('categories.types.store');
+    Route::get('/admin/categories/{category}/types-json', [TypeController::class, 'byCategory'])->name('categories.types.json');
+
+    Route::get('/admin/types', [TypeController::class, 'index'])->name('types.index');
+    Route::post('/admin/types', [TypeController::class, 'store'])->name('types.store');
+    Route::put('/admin/types/{type}', [TypeController::class, 'update'])->name('types.update');
+    Route::delete('/admin/types/{type}', [TypeController::class, 'destroy'])->name('types.destroy');
 
 
     // Carousel Routes

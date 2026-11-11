@@ -241,22 +241,48 @@
                 <!-- Product Info -->
                 <div class="flex flex-col justify-center space-y-6">
                     @php
-                        $categoryName = strtolower($product->category?->name);
+                        $categoryName = strtolower((string) ($product->category?->name ?? ''));
+                        $resolvedTypeName = $product->resolvedTypeName();
+                        $resolvedSubtitle = $product->resolvedSubtitle();
+                        $customInput = json_decode($product->custom_input, true);
+                        $filteredCustomInput = [];
+                        if (is_array($customInput)) {
+                            foreach ($customInput as $key => $value) {
+                                if (blank($value)) {
+                                    continue;
+                                }
+                                $isLegacyTypeKey = $resolvedTypeName && (
+                                    in_array(strtolower($key), ['tipe', 'type'], true)
+                                    || (strtolower($key) === 'value' && $categoryName !== 'cable tray')
+                                );
+                                if (!$isLegacyTypeKey) {
+                                    $filteredCustomInput[$key] = $value;
+                                }
+                            }
+                        }
                     @endphp
                     
-                    <!-- Product Category Badge -->
-                    <a href="{{ route('products.view.user', Str::slug($product->category?->name ?? '')) }}" class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 text-white text-sm font-bold tracking-wider uppercase w-fit hover:bg-white/30 transition-all">
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/>
-                        </svg>
-                        {{ $product->category?->name ?? 'Product' }}
-                    </a>
+                    <!-- Product Category & Type Badge -->
+                    <div class="flex flex-wrap items-center gap-2">
+                        <a href="{{ route('products.view.user', Str::slug($product->category?->name ?? '')) }}" class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 text-white text-sm font-bold tracking-wider uppercase w-fit hover:bg-white/30 transition-all">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/>
+                            </svg>
+                            {{ $product->category?->name ?? 'Product' }}
+                        </a>
+                        @if ($resolvedTypeName && $product->category)
+                            <a href="{{ route('products.view.user', ['category' => Str::slug($product->category->name), 'type' => Str::slug($resolvedTypeName)]) }}"
+                               class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#066c5f] text-white text-sm font-bold tracking-wider uppercase w-fit hover:bg-[#F77F1E] transition-all">
+                                {{ $resolvedTypeName }}
+                            </a>
+                        @endif
+                    </div>
 
                     <!-- Product Name -->
                     <h1 class="text-4xl lg:text-5xl font-black text-gray-900 leading-tight">
                         {{ $product->name }}
-                        @if (in_array($categoryName, ['cable tray', 'pilot lamp', 'accessories']))
-                            <span class="text-[#0dd8bd]">- {{ $product->custom_input }}</span>
+                        @if (in_array($categoryName, ['cable tray', 'pilot lamp', 'accessories']) && $resolvedSubtitle)
+                            <span class="text-[#0dd8bd]">- {{ $resolvedSubtitle }}</span>
                         @endif
                     </h1>
 
@@ -266,13 +292,16 @@
                         <span class="text-xl font-bold text-white">{{ $product->kode }}</span>
                     </div>
 
-                    <!-- Custom Input Fields -->
-                    @php
-                        $customInput = json_decode($product->custom_input, true);
-                    @endphp
-                    @if ($customInput)
+                    <!-- Type & Custom Input Fields -->
+                    @if ($resolvedTypeName || !empty($filteredCustomInput))
                         <div class="grid grid-cols-2 gap-4 p-6 bg-white/20 rounded-2xl">
-                            @foreach ($customInput as $key => $value)
+                            @if ($resolvedTypeName)
+                                <div>
+                                    <p class="text-xs font-semibold text-gray-200 uppercase tracking-wider mb-1">{{ __('Type') }}</p>
+                                    <p class="text-lg font-bold text-white">{{ __($resolvedTypeName) }}</p>
+                                </div>
+                            @endif
+                            @foreach ($filteredCustomInput as $key => $value)
                                 <div>
                                     <p class="text-xs font-semibold text-gray-200 uppercase tracking-wider mb-1">{{ __(ucfirst($key)) }}</p>
                                     <p class="text-lg font-bold text-white">{{ __($value) }}</p>

@@ -44,9 +44,21 @@
         </div>
 
         <!-- Catalog Section -->
-        <div x-data="{ open: {{ (request()->routeIs('products.*') ? 'true' : 'false') }} }">
+        <div x-data="{ open: {{ (request()->routeIs('products.*') || request()->routeIs('categories.*') || request()->routeIs('types.*') ? 'true' : 'false') }} }">
             <h3 class="px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">{{ __('Catalog Management') }}</h3>
             <div class="space-y-1">
+                <a href="{{ route('categories.index') }}"
+                   class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 {{ request()->routeIs('categories.*') ? 'bg-[#066c5f] text-white shadow-lg shadow-[#066c5f]/20' : 'hover:bg-slate-800 hover:text-white' }}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                    <span class="font-medium">{{ __('Master Categories') }}</span>
+                </a>
+
+                <a href="{{ route('types.index') }}"
+                   class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 {{ request()->routeIs('types.*') ? 'bg-[#066c5f] text-white shadow-lg shadow-[#066c5f]/20' : 'hover:bg-slate-800 hover:text-white' }}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                    <span class="font-medium">{{ __('Master Types') }}</span>
+                </a>
+
                 <button @click="open = !open" 
                    class="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 hover:bg-slate-800 hover:text-white">
                     <div class="flex items-center gap-3">
@@ -57,7 +69,7 @@
                 </button>
                 <div x-show="open" x-collapse class="pl-12 space-y-1">
                     <a href="{{ route('products.view') }}" class="block py-2 text-sm transition-colors {{ request()->routeIs('products.view') ? 'text-[#F77F1E]' : 'hover:text-white' }}">{{ __('Tambah Produk') }}</a>
-                    <a href="{{ route('products.edit') }}" class="block py-2 text-sm transition-colors {{ request()->routeIs('products.edit') ? 'text-[#F77F1E]' : 'hover:text-white' }}">{{ __('Perbarui Produk') }}</a>
+                    <a href="{{ route('products.edit') }}" class="block py-2 text-sm transition-colors {{ request()->routeIs('products.edit') || request()->routeIs('products.editss') ? 'text-[#F77F1E]' : 'hover:text-white' }}">{{ __('Perbarui Produk') }}</a>
                     <a href="{{ route('products.import.view') }}" class="block py-2 text-sm transition-colors {{ request()->routeIs('products.import.view') ? 'text-[#F77F1E]' : 'hover:text-white' }}">{{ __('Mass Upload / Update') }}</a>
                 </div>
 

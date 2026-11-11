@@ -5,23 +5,29 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\ProductAtribute;
 use App\Models\Category;
+use App\Models\Type;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
 {
     public function index(Request $request, $category = null)
     {
-        $query = Product::select('id', 'name', 'slug', 'kode', 'image', 'category_id', 'custom_input')
-            ->with('category:id,name');
+        $query = Product::select('id', 'name', 'slug', 'kode', 'image', 'category_id', 'type_id', 'custom_input')
+            ->with(['category:id,name', 'type:id,category_id,name']);
 
         $activeCategoryId = null;
         $activeCategory = null;
+        $activeTypeId = null;
+        $activeType = null;
 
         $categories = \Illuminate\Support\Facades\Cache::remember('all_categories_nav', 3600, function () {
-            return Category::select('id', 'name')->get();
+            return Category::with(['types' => fn ($q) => $q->select('id', 'category_id', 'name')->orderBy('name')])
+                ->select('id', 'name')
+                ->get();
         });
 
         if ($category) {
@@ -44,23 +50,65 @@ class ProductController extends Controller
             }
         }
 
+        if ($activeCategory && !$activeCategory->relationLoaded('types')) {
+            $activeCategory->load(['types' => fn ($q) => $q->select('id', 'category_id', 'name')->orderBy('name')]);
+        }
+
+        $availableTypes = $activeCategory ? $activeCategory->types : collect();
+
+        if ($request->filled('type')) {
+            $typeParam = trim((string) $request->query('type'));
+            if ($activeCategory) {
+                $matchedType = $availableTypes->first(function ($t) use ($typeParam) {
+                    return (string) $t->id === $typeParam
+                        || Str::slug($t->name) === Str::slug($typeParam)
+                        || strtolower($t->name) === strtolower($typeParam);
+                });
+
+                if ($matchedType) {
+                    $query->where('type_id', $matchedType->id);
+                    $activeType = $matchedType;
+                    $activeTypeId = $matchedType->id;
+                } else {
+                    // Explicit type filter that does not belong to this category should yield 0 matches
+                    $query->whereRaw('1 = 0');
+                }
+            } elseif (ctype_digit($typeParam)) {
+                $matchedType = Type::select('id', 'category_id', 'name')->find((int) $typeParam);
+                if ($matchedType) {
+                    $query->where('type_id', $matchedType->id);
+                    $activeType = $matchedType;
+                    $activeTypeId = $matchedType->id;
+                }
+            }
+        }
+
         if ($request->filled('search')) {
             $searchTerm = trim($request->search);
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'like', "%{$searchTerm}%")
                     ->orWhere('kode', 'like', "%{$searchTerm}%")
-                    ->orWhere('custom_input', 'like', "%{$searchTerm}%");
+                    ->orWhere('custom_input', 'like', "%{$searchTerm}%")
+                    ->orWhereHas('type', fn ($tq) => $tq->where('name', 'like', "%{$searchTerm}%"));
             });
         }
 
         $products = $query->latest('id')->paginate(24)->withQueryString();
 
-        return view('product', compact('products', 'categories', 'activeCategoryId', 'activeCategory'));
+        return view('product', compact(
+            'products',
+            'categories',
+            'activeCategoryId',
+            'activeCategory',
+            'availableTypes',
+            'activeType',
+            'activeTypeId'
+        ));
     }
 
     public function show($param)
     {
-        $product = Product::with('attributes', 'category')
+        $product = Product::with(['attributes', 'category', 'type'])
             ->where(function ($q) use ($param) {
                 $q->where('slug', $param)
                     ->orWhere('id', $param);
@@ -98,7 +146,10 @@ class ProductController extends Controller
 
     public function view()
     {
-        $categories = Category::with('products')->get();
+        $categories = Category::with(['types' => fn ($q) => $q->select('id', 'category_id', 'name')->orderBy('name')])
+            ->orderBy('name')
+            ->get();
+
         return view('product-input', compact('categories'));
     }
 
@@ -110,6 +161,11 @@ class ProductController extends Controller
             'stock' => 'nullable|integer|min:0',
             'kode' => 'required|string|unique:products,kode',
             'category_id' => 'required|exists:categories,id',
+            'type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('types', 'id')->where(fn ($query) => $query->where('category_id', $request->input('category_id'))),
+            ],
             'meta_title' => 'nullable|string|max:255',
             'meta_description' => 'nullable|string|max:500',
 
@@ -153,83 +209,60 @@ class ProductController extends Controller
         }
 
         $customInput = null;
-
+        $hasMasterType = $request->filled('type_id');
         $category = Category::find($request->category_id);
-        // dd($request->all());
 
         if ($category) {
             $categoryName = strtolower($category->name);
 
-            if (str_contains($categoryName, 'push button')) {
-                $type = $request->input('push_button_type');
-                $series = $request->input('push_button_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif (str_contains($categoryName, 'selector switch')) {
-                $type = $request->input('selector_switch_type');
-                $series = $request->input('selector_switch_series');
+            $seriesMap = [
+                'push button' => ['type' => 'push_button_type', 'series' => 'push_button_series', 'contains' => true],
+                'selector switch' => ['type' => 'selector_switch_type', 'series' => 'selector_switch_series', 'contains' => true],
+                'cable lug' => ['type' => 'cable_lug_type', 'series' => 'cable_lug_series', 'contains' => false],
+                'mccb' => ['type' => 'mccb_type', 'series' => 'mccb_series', 'contains' => false],
+                'mccb accessories' => ['type' => 'mccb_accessories_type', 'series' => 'mccb_accessories_series', 'contains' => false],
+                'contactor accessories' => ['type' => 'contactor_accessories_type', 'series' => 'contactor_accessories_series', 'contains' => false],
+                'terminal block' => ['type' => 'terminal_block_type', 'series' => 'terminal_block_series', 'contains' => false],
+            ];
 
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'cable lug') {
-                $type = $request->input('cable_lug_type');
-                $series = $request->input('cable_lug_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'mccb') {
-                $type = $request->input('mccb_type');
-                $series = $request->input('mccb_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'mccb accessories') {
-                $type = $request->input('mccb_accessories_type');
-                $series = $request->input('mccb_accessories_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'contactor accessories') {
-                $type = $request->input('contactor_accessories_type');
-                $series = $request->input('contactor_accessories_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'cable lug') {
-                $type = $request->input('cable_lug_type');
-                $series = $request->input('cable_lug_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } elseif ($categoryName === 'terminal block') {
-                $type = $request->input('terminal_block_type');
-                $series = $request->input('terminal_block_series');
-                $customInput = json_encode([
-                    'tipe' => $type,
-                    'series' => $series,
-                ]);
-            } else {
-                $customInputFields = [
-                    'pilot_lamp_type',
-                    'uc_series',
-                    'accessories_type',
-                ];
+            $matched = false;
+            foreach ($seriesMap as $key => $fields) {
+                $isMatch = $fields['contains']
+                    ? str_contains($categoryName, $key)
+                    : $categoryName === $key;
 
-                foreach ($customInputFields as $field) {
-                    if ($request->has($field)) {
-                        $customInput = json_encode([
-                            'value' => $request->input($field),
-                        ]);
-                        break;
+                if ($isMatch) {
+                    $matched = true;
+                    $series = $request->input($fields['series']);
+                    $legacyType = !$hasMasterType ? $request->input($fields['type']) : null;
+
+                    $payload = [];
+                    if (!blank($legacyType)) {
+                        $payload['tipe'] = $legacyType;
+                    }
+                    if (!blank($series)) {
+                        $payload['series'] = $series;
+                    }
+                    if (!empty($payload)) {
+                        $customInput = json_encode($payload);
+                    }
+                    break;
+                }
+            }
+
+            if (!$matched) {
+                if ($request->filled('uc_series')) {
+                    $customInput = json_encode([
+                        'value' => $request->input('uc_series'),
+                    ]);
+                } elseif (!$hasMasterType) {
+                    foreach (['pilot_lamp_type', 'accessories_type'] as $field) {
+                        if ($request->filled($field)) {
+                            $customInput = json_encode([
+                                'value' => $request->input($field),
+                            ]);
+                            break;
+                        }
                     }
                 }
             }
@@ -263,6 +296,7 @@ class ProductController extends Controller
             'stock' => $request->stock,
             'kode' => $request->kode,
             'category_id' => $request->category_id,
+            'type_id' => $request->filled('type_id') ? (int) $request->input('type_id') : null,
             'custom_input' => $customInput,
             'image' => $imagePath,
             'optional_image' => $optionalImagePath,
@@ -299,15 +333,17 @@ class ProductController extends Controller
 
     public function edit(Request $request)
     {
-        $query = Product::select('id', 'name', 'description', 'kode', 'image', 'category_id', 'custom_input')
-            ->with('category:id,name');
+        $query = Product::select('id', 'name', 'description', 'kode', 'image', 'category_id', 'type_id', 'custom_input')
+            ->with(['category:id,name', 'type:id,category_id,name']);
 
         if ($request->filled('search')) {
             $searchTerm = trim($request->search);
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'like', "%{$searchTerm}%")
                     ->orWhere('kode', 'like', "%{$searchTerm}%")
-                    ->orWhere('custom_input', 'like', "%{$searchTerm}%");
+                    ->orWhere('custom_input', 'like', "%{$searchTerm}%")
+                    ->orWhereHas('category', fn ($cq) => $cq->where('name', 'like', "%{$searchTerm}%"))
+                    ->orWhereHas('type', fn ($tq) => $tq->where('name', 'like', "%{$searchTerm}%"));
             });
         }
 
@@ -317,8 +353,11 @@ class ProductController extends Controller
 
     public function editView($id)
     {
-        $product = Product::with('attributes')->findOrFail($id);
-        $categories = Category::all();
+        $product = Product::with(['attributes', 'category', 'type'])->findOrFail($id);
+        $categories = Category::with(['types' => fn ($q) => $q->select('id', 'category_id', 'name')->orderBy('name')])
+            ->orderBy('name')
+            ->get();
+
         return view('update-product', compact('product', 'categories'));
     }
 
@@ -330,6 +369,11 @@ class ProductController extends Controller
             'stock' => 'nullable|integer|min:0',
             'kode' => 'required|string|unique:products,kode,' . $id,
             'category_id' => 'required|exists:categories,id',
+            'type_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('types', 'id')->where(fn ($query) => $query->where('category_id', $request->input('category_id'))),
+            ],
 
             // ✅ META (AMAN: nullable)
             'meta_title' => 'nullable|string|max:255',
@@ -383,21 +427,31 @@ class ProductController extends Controller
             $product->kode = $request->kode;
         }
 
-        if ($product->category_id !== $request->category_id) {
+        if ((int) $product->category_id !== (int) $request->category_id) {
             $oldCategoryName = $product->category ? $product->category->name : '(kategori dihapus)';
-            $newCategoryName = Category::find($request->category_id)->name;
+            $newCategoryName = Category::find($request->category_id)?->name ?? '(kategori tidak ditemukan)';
             $historyChanges[] = 'kategori dari "' . $oldCategoryName . '" menjadi "' . $newCategoryName . '"';
-            $product->category_id = $request->category_id;
+            $product->category_id = (int) $request->category_id;
         }
 
-        // Ambil langsung custom_input dari request (sudah digabung dari form)
-        $customInput = $request->input('custom_input');
+        $oldTypeId = $product->type_id ? (int) $product->type_id : null;
+        $newTypeId = $request->filled('type_id') ? (int) $request->input('type_id') : null;
+        if ($oldTypeId !== $newTypeId) {
+            $oldTypeName = $product->type ? $product->type->name : '(kosong)';
+            $newTypeName = $newTypeId ? (Type::find($newTypeId)?->name ?? '(kosong)') : '(kosong)';
+            $historyChanges[] = 'type dari "' . $oldTypeName . '" menjadi "' . $newTypeName . '"';
+            $product->type_id = $newTypeId;
+        }
 
-        if ($product->custom_input !== $customInput) {
-            $oldCustom = $product->custom_input ?? '(kosong)';
-            $newCustom = $customInput ?? '(kosong)';
-            $historyChanges[] = 'custom input dari "' . $oldCustom . '" menjadi "' . $newCustom . '"';
-            $product->custom_input = $customInput;
+        if ($request->has('custom_input')) {
+            $customInput = $request->input('custom_input');
+
+            if ($product->custom_input !== $customInput) {
+                $oldCustom = $product->custom_input ?? '(kosong)';
+                $newCustom = $customInput ?? '(kosong)';
+                $historyChanges[] = 'custom input dari "' . $oldCustom . '" menjadi "' . $newCustom . '"';
+                $product->custom_input = $customInput;
+            }
         }
 
         // ✅ META CHANGES

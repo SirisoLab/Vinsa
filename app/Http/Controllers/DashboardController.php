@@ -8,6 +8,7 @@ use App\Models\Carousel;
 use App\Models\Category;
 use App\Models\History;
 use App\Models\Product;
+use App\Models\Type;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
@@ -20,6 +21,7 @@ class DashboardController extends Controller
         $carouselCount = Carousel::count();
         $blogCount = Blog::count();
         $categoryCount = Category::count();
+        $typeCount = Type::count();
     
         $query = History::with('user');
     
@@ -45,7 +47,7 @@ class DashboardController extends Controller
     
         $histories = $query->latest()->paginate(10);
     
-        return view('dashboard', compact('histories', 'productCount', 'carouselCount', 'blogCount', 'categoryCount'));
+        return view('dashboard', compact('histories', 'productCount', 'carouselCount', 'blogCount', 'categoryCount', 'typeCount'));
     }
     
 }

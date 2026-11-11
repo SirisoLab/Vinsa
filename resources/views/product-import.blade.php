@@ -110,8 +110,8 @@
                             <p class="text-sm font-bold">Existing <span class="bg-white/10 px-2 py-1 rounded">KODE</span> will trigger an <u>Update</u>. New codes will trigger a <u>Creation</u>.</p>
                         </div>
                         <div class="space-y-2">
-                            <h4 class="font-black uppercase tracking-widest text-[10px] text-emerald-200">Categories</h4>
-                            <p class="text-sm font-bold">If a category name in Excel doesn't exist, the system will <u>generate it</u> automatically.</p>
+                            <h4 class="font-black uppercase tracking-widest text-[10px] text-emerald-200">Categories &amp; Types</h4>
+                            <p class="text-sm font-bold">If a category or <span class="bg-white/10 px-2 py-1 rounded">type</span> in Excel doesn't exist yet, the system will <u>create that type inside the row's category</u> automatically.</p>
                         </div>
                         <div class="space-y-2">
                             <h4 class="font-black uppercase tracking-widest text-[10px] text-emerald-200">Images (image & optional_image)</h4>

@@ -239,11 +239,15 @@
 
         /* Ensure slider buttons are visible on mobile */
         @media (max-width: 767px) {
-            .group\/slider button, .group\/outer-slider button {
+            .group\/slider > button,
+            .group\/outer-slider > button.outer-slider-btn {
                 opacity: 1 !important;
                 display: flex !important;
             }
-            .hide-slider-mobile button {
+            .group\/outer-slider > button.outer-slider-btn:disabled {
+                opacity: 0.4 !important;
+            }
+            .hide-slider-mobile > button {
                 display: none !important;
             }
         }
@@ -414,8 +418,10 @@
                             </a>
                         </h3>
 
-                        @if ($category->products->count())
-                            @if (strtolower($category->name) === 'push button')
+                        @if ($category->products->count() || $category->types->isNotEmpty())
+                            @if ($category->types->isNotEmpty())
+                                <x-category-types-slider :category="$category" />
+                            @elseif (strtolower($category->name) === 'push button')
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
                                     {{-- KB 5 Series --}}
                                     <div class="w-full text-white bg-white/5 backdrop-blur-md p-6 rounded-[2rem] border border-white/10">
@@ -1716,6 +1722,11 @@
                                                         <p class="text-xs font-bold text-white leading-tight line-clamp-2">
                                                             {{ $productItem->name }}
                                                         </p>
+                                                        @if ($resolvedCardType = $productItem->resolvedTypeName())
+                                                            <div class="mt-1.5 text-[9px] text-white/60 uppercase">
+                                                                {{ __('Type') }}: {{ Str::limit($resolvedCardType, 16) }}
+                                                            </div>
+                                                        @endif
                                                         <div class="mt-auto pt-3 flex justify-between items-center">
                                                             <span class="text-[10px] text-white/40 font-semibold italic">{{ __('VIEW') }}</span>
                                                             <div class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center group-hover:bg-[#066c5f] transition-colors">
@@ -1745,10 +1756,21 @@
 
                     {{-- TABLET ONLY (md): NO MORE carousel inside carousel --}}
                     <div class="hidden md:block bg-[#5f5f5f60]/40 backdrop-blur-md lg:hidden p-8 mt-2 col-span-12 rounded-[2rem] border border-white/20 shadow-2xl">
-                        <h3 class="text-2xl font-bold mb-6 border-b-[1.5px] pb-4 border-white/20 text-white flex items-center gap-3">
+                        <h3 class="text-2xl font-bold mb-4 border-b-[1.5px] pb-4 border-white/20 text-white flex items-center gap-3">
                             <div class="w-3 h-3 bg-[#066c5f] rounded-full animate-pulse shadow-[0_0_10px_#066c5f]"></div>
                             {{ __($category->name) }}
                         </h3>
+
+                        @if ($category->types->isNotEmpty())
+                            <div class="flex items-center gap-2 overflow-x-auto pb-4 mb-2 no-scrollbar">
+                                @foreach ($category->types as $tabletType)
+                                    <a href="{{ route('products.view.user', ['category' => $categorySlug, 'type' => \Illuminate\Support\Str::slug($tabletType->name)]) }}"
+                                        class="whitespace-nowrap px-4 py-1.5 rounded-full bg-white/15 hover:bg-[#066c5f] text-white text-xs font-bold border border-white/20 transition-colors">
+                                        {{ __($tabletType->name) }}
+                                    </a>
+                                @endforeach
+                            </div>
+                        @endif
 
                         <div class="grid grid-cols-3 gap-6">
                             @foreach ($previewItems as $productItem)
@@ -1778,6 +1800,11 @@
                                         <p class="text-base font-bold text-white leading-snug line-clamp-2 group-hover:text-[#066c5f] transition-colors">
                                             {{ $productItem->name }}
                                         </p>
+                                        @if ($tabletCardType = $productItem->resolvedTypeName())
+                                            <p class="text-[11px] font-semibold text-white/75 mt-1.5 truncate">
+                                                {{ __($tabletCardType) }}
+                                            </p>
+                                        @endif
                                         
                                         <div class="mt-auto pt-5 flex justify-between items-center border-t border-white/5">
                                             <span class="text-[11px] text-white/50 font-medium tracking-wide">{{ __('DETAILS') }}</span>
@@ -2235,22 +2262,58 @@
 </script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        function updateNavigationButtons() {
-            document.querySelectorAll('.group\\/slider, .group\\/outer-slider').forEach(sliderGroup => {
-                const container = sliderGroup.querySelector('.slider-container');
-                if (!container) return;
-                
-                const hasScroll = container.scrollWidth > container.clientWidth;
-                const buttons = sliderGroup.querySelectorAll('button[onclick*="scrollSlider"]');
-                
-                buttons.forEach(button => {
-                    button.style.display = hasScroll ? 'flex' : 'none';
-                });
+        function getDirectSliderContainer(sliderGroup) {
+            return Array.from(sliderGroup.children).find(el => el.classList.contains('slider-container'))
+                || sliderGroup.querySelector('.slider-container');
+        }
+
+        function getDirectScrollButtons(sliderGroup) {
+            const direct = Array.from(sliderGroup.children).filter(
+                el => el.tagName === 'BUTTON' && (el.getAttribute('onclick') || '').includes('scrollSlider')
+            );
+            return direct.length ? direct : Array.from(sliderGroup.querySelectorAll('button[onclick*="scrollSlider"]'));
+        }
+
+        function updateSliderGroup(sliderGroup) {
+            const container = getDirectSliderContainer(sliderGroup);
+            if (!container) return;
+
+            const maxScrollLeft = container.scrollWidth - container.clientWidth;
+            const hasScroll = maxScrollLeft > 2;
+            const buttons = getDirectScrollButtons(sliderGroup);
+
+            buttons.forEach(button => {
+                button.style.display = hasScroll ? 'flex' : 'none';
+                if (!hasScroll) {
+                    button.disabled = true;
+                    return;
+                }
+
+                const dir = (button.getAttribute('onclick') || '').includes('-1') ? -1 : 1;
+                const atEdge = dir === -1
+                    ? container.scrollLeft <= 2
+                    : container.scrollLeft >= maxScrollLeft - 2;
+                button.disabled = atEdge;
+                if (button.classList.contains('outer-slider-btn')) {
+                    button.classList.toggle('opacity-40', atEdge);
+                    button.classList.toggle('pointer-events-none', atEdge);
+                }
             });
         }
-        
+
+        function updateNavigationButtons() {
+            document.querySelectorAll('.group\\/slider, .group\\/outer-slider').forEach(updateSliderGroup);
+        }
+
         updateNavigationButtons();
-        
+
+        document.querySelectorAll('.group\\/slider, .group\\/outer-slider').forEach(sliderGroup => {
+            const container = getDirectSliderContainer(sliderGroup);
+            if (container) {
+                container.addEventListener('scroll', () => updateSliderGroup(sliderGroup), { passive: true });
+            }
+        });
+
         let resizeTimer;
         window.addEventListener('resize', function() {
             clearTimeout(resizeTimer);
@@ -2259,7 +2322,9 @@
     });
 
     function scrollSlider(button, direction) {
-        const container = button.parentElement.querySelector('.slider-container');
+        const sliderGroup = button.parentElement;
+        const container = Array.from(sliderGroup.children).find(el => el.classList.contains('slider-container'))
+            || sliderGroup.querySelector('.slider-container');
         if (container) {
             const firstCard = container.firstElementChild;
             const cardWidth = firstCard ? firstCard.offsetWidth : 200;

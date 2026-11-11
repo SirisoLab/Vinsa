@@ -138,20 +138,56 @@
                     <!-- Right Column: Media & Category -->
                     <div class="space-y-6">
                         <!-- Category Section -->
+                        @php
+                            $categoryTypesMap = $categories->mapWithKeys(fn ($c) => [
+                                (string) $c->id => [
+                                    'name' => $c->name,
+                                    'manageUrl' => route('categories.show', $c),
+                                    'types' => $c->types->map(fn ($t) => [
+                                        'id' => $t->id,
+                                        'name' => $t->name,
+                                    ])->values(),
+                                ],
+                            ])->all();
+                            $legacyTypeHint = $product->type_id === null ? $product->legacyTypeName() : null;
+                        @endphp
                         <div class="bg-white rounded-[2rem] p-8 border border-slate-200 shadow-sm space-y-6">
                             <h2 class="text-xl font-black text-slate-900">Classification</h2>
                             <div class="space-y-4">
                                 <div class="space-y-2">
-                                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest pl-1">Category</label>
+                                    <label for="categorySelect" class="block text-xs font-black text-slate-500 uppercase tracking-widest pl-1">Category</label>
                                     <select name="category_id" id="categorySelect" required 
                                             class="w-full px-5 py-3 bg-slate-100 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold appearance-none">
                                         @foreach ($categories as $category)
-                                            <option value="{{ $category->id }}" {{ old('category_id', $product->category_id) == $category->id ? 'selected' : '' }} data-name="{{ strtolower($category->name) }}">
+                                            <option value="{{ $category->id }}" {{ (string) old('category_id', $product->category_id) === (string) $category->id ? 'selected' : '' }} data-name="{{ strtolower($category->name) }}">
                                                 {{ $category->name }}
                                             </option>
                                         @endforeach
                                     </select>
                                 </div>
+
+                                <div class="space-y-2">
+                                    <div class="flex items-center justify-between pl-1">
+                                        <label for="typeSelect" class="block text-xs font-black text-slate-500 uppercase tracking-widest">Type</label>
+                                        <a id="manageCategoryTypesLink" href="{{ $product->category_id ? route('categories.show', $product->category_id) : route('categories.index') }}" target="_blank"
+                                           class="text-[10px] font-black text-[#066c5f] hover:text-[#F77F1E] uppercase tracking-wider transition-colors">
+                                            Kelola Type &rarr;
+                                        </a>
+                                    </div>
+                                    <select name="type_id" id="typeSelect"
+                                            class="w-full px-5 py-3 bg-slate-100 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold appearance-none">
+                                        <option value="">Pilih Type (Opsional)</option>
+                                    </select>
+                                    <p id="typeHelperText" class="text-[11px] font-medium text-slate-400 pl-1">
+                                        Pilihan type mengikuti category yang dipilih.
+                                    </p>
+                                    @if ($legacyTypeHint)
+                                        <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs font-semibold text-amber-800">
+                                            Legacy Type tercatat: <span class="font-black">{{ $legacyTypeHint }}</span> &mdash; pilih Master Type di atas untuk memetakan.
+                                        </div>
+                                    @endif
+                                </div>
+
                                 <input type="hidden" name="custom_input" id="custom_input" value="{{ old('custom_input', $product->custom_input ?? '') }}">
                                 <div id="category-extra" class="space-y-4 animate-in fade-in duration-300"></div>
                             </div>
@@ -290,13 +326,40 @@
             specCount++;
         }
 
-        function updatePushButtonValue(tipe = null, series = null) {
+        function parseLegacyJsonObject(raw) {
+            const trimmed = (raw || '').trim();
+            if (!trimmed.startsWith('{')) {
+                return {};
+            }
+            try {
+                const parsed = JSON.parse(trimmed);
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+            } catch (err) {
+                return {};
+            }
+        }
+
+        function updateSeriesCustomInput(series = null, valueKeyOnly = false) {
             const hidden = document.getElementById('custom_input');
-            let current = {};
-            try { current = JSON.parse(hidden.value || '{}'); } catch {}
-            if (tipe !== null) current.tipe = tipe;
-            if (series !== null) current.series = series;
-            hidden.value = JSON.stringify(current);
+            const current = parseLegacyJsonObject(hidden.value);
+
+            if (valueKeyOnly) {
+                if (series) {
+                    hidden.value = JSON.stringify({ value: series });
+                } else {
+                    hidden.value = '';
+                }
+                return;
+            }
+
+            if (series !== null) {
+                if (series === '') {
+                    delete current.series;
+                } else {
+                    current.series = series;
+                }
+            }
+            hidden.value = Object.keys(current).length > 0 ? JSON.stringify(current) : '';
         }
 
         document.addEventListener("DOMContentLoaded", function() {
@@ -325,15 +388,62 @@
             }
 
             const categorySelect = document.getElementById('categorySelect');
+            const typeSelect = document.getElementById('typeSelect');
+            const typeHelperText = document.getElementById('typeHelperText');
+            const manageTypesLink = document.getElementById('manageCategoryTypesLink');
             const extraContainer = document.getElementById('category-extra');
             const customInputHidden = document.getElementById('custom_input');
-            const oldCategory = categorySelect.options[categorySelect.selectedIndex]?.dataset?.name;
-            let oldValue = customInputHidden.value;
-            let parsedOld = {};
-            try { parsedOld = JSON.parse(oldValue); } catch {}
+            const categoryTypesMap = @json($categoryTypesMap);
+            const initialCategoryId = @json((string) old('category_id', $product->category_id));
+            const initialTypeId = @json((string) old('type_id', $product->type_id ?? ''));
+
+            const originalCustomValue = customInputHidden.value;
+            let oldValue = originalCustomValue;
+            let parsedOld = parseLegacyJsonObject(oldValue);
+
+            function populateTypeOptions(categoryId, selectedTypeId = '') {
+                const catData = categoryTypesMap[categoryId];
+                if (!catData) {
+                    typeSelect.innerHTML = '<option value="">Pilih category terlebih dahulu</option>';
+                    typeSelect.disabled = true;
+                    manageTypesLink.href = @json(route('categories.index'));
+                    return;
+                }
+
+                const types = catData.types || [];
+                manageTypesLink.href = catData.manageUrl;
+
+                if (types.length === 0) {
+                    typeSelect.innerHTML = '<option value="">Belum ada type di category ini (opsional)</option>';
+                    typeSelect.disabled = false;
+                    typeHelperText.textContent = 'Category ini belum memiliki Master Type. Klik "Kelola Type" untuk menambahkan.';
+                    return;
+                }
+
+                typeSelect.disabled = false;
+                typeHelperText.textContent = `${types.length} type tersedia di dalam category ${catData.name}.`;
+
+                typeSelect.innerHTML = '';
+                const emptyOpt = document.createElement('option');
+                emptyOpt.value = '';
+                emptyOpt.textContent = 'Pilih Type (Opsional)';
+                typeSelect.appendChild(emptyOpt);
+
+                types.forEach(typeItem => {
+                    const opt = document.createElement('option');
+                    opt.value = String(typeItem.id);
+                    opt.textContent = typeItem.name;
+                    if (selectedTypeId && String(typeItem.id) === String(selectedTypeId)) {
+                        opt.selected = true;
+                    }
+                    typeSelect.appendChild(opt);
+                });
+            }
 
             function renderExtraFields(category) {
                 extraContainer.innerHTML = '';
+                if (!category) return;
+
                 const fieldWrap = (label, input) => `
                     <div class="space-y-2 animate-in fade-in slide-in-from-top-2">
                         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">${label}</label>
@@ -341,94 +451,62 @@
                     </div>
                 `;
 
-                if (category === 'cable tray') {
-                    const selected = oldValue === 'U Series' ? 'U Series' : (oldValue === 'C Series' ? 'C Series' : '');
-                    extraContainer.innerHTML = fieldWrap('U & C Series', `
+                const renderSeriesSelect = (label, options, selectedValue, valueKeyOnly = false) => {
+                    return fieldWrap(label, `
                         <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold"
-                            onchange="document.getElementById('custom_input').value = this.value;">
-                            <option value="">Pilih Series</option>
-                            <option value="U Series" ${selected === 'U Series' ? 'selected' : ''}>U Series</option>
-                            <option value="C Series" ${selected === 'C Series' ? 'selected' : ''}>C Series</option>
+                            onchange="updateSeriesCustomInput(this.value, ${valueKeyOnly ? 'true' : 'false'})">
+                            <option value="">Pilih Series (Opsional)</option>
+                            ${options.map(opt => `<option value="${opt}" ${selectedValue === opt ? 'selected' : ''}>${opt}</option>`).join('')}
                         </select>
                     `);
-                    customInputHidden.value = selected;
+                };
+
+                if (category === 'cable tray') {
+                    const selected = parsedOld.value || (!oldValue.startsWith('{') ? oldValue : '');
+                    extraContainer.innerHTML = renderSeriesSelect('U & C Series', ['U Series', 'C Series'], selected, true);
                 } else if (category.includes('push button') || category.includes('selector switch')) {
-                    const tipe = parsedOld.tipe || '';
                     const series = parsedOld.series || '';
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', `<input type="text" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold" value="${tipe}" oninput="updatePushButtonValue(this.value, null)">`) +
-                        fieldWrap('Series', `
-                            <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                                <option value="">Pilih Series</option>
-                                <option value="KB 5 Series" ${series === 'KB 5 Series' ? 'selected' : ''}>KB 5 Series</option>
-                                <option value="KB 2 Series" ${series === 'KB 2 Series' ? 'selected' : ''}>KB 2 Series</option>
-                            </select>
-                        `);
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['KB 2 Series', 'KB 5 Series'], series);
                 } else if (category === 'mccb') {
                     const series = parsedOld.series || '';
-                    const options = ['M12B 25kA', 'M16F 35kA', 'M25F 35kA', 'M40F 35kA', 'M63F 35kA', 'M80F 35kA'];
-                    extraContainer.innerHTML = fieldWrap('Series', `
-                        <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                            <option value="">Pilih Series</option>
-                            ${options.map(opt => `<option value="${opt}" ${series === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                        </select>
-                    `);
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['M12B 25kA', 'M16F 35kA', 'M25F 35kA', 'M40F 35kA', 'M63F 35kA', 'M80F 35kA'], series);
                 } else if (category === 'terminal block') {
                     const series = parsedOld.series || '';
-                    const options = ['Terminal Strip', 'Terminal Block TB', 'Terminal Block TBC', 'Terminal Block TBR', 'Terminal Block TUK', 'Terminal Block TUSLKG', 'Terminal Block KLUS'];
-                    extraContainer.innerHTML = fieldWrap('Series', `
-                        <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                            <option value="">Pilih Series</option>
-                            ${options.map(opt => `<option value="${opt}" ${series === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                        </select>
-                    `);
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['Terminal Strip', 'Terminal Block TB', 'Terminal Block TBC', 'Terminal Block TBR', 'Terminal Block TUK', 'Terminal Block TUSLKG', 'Terminal Block KLUS'], series);
                 } else if (category === 'cable lug') {
-                    const tipe = parsedOld.tipe || '';
                     const series = parsedOld.series || '';
-                    const options = ['SC Cable Lug', 'SV Cable Lug', 'RV Cable Lug', 'PTV Cable Lug', 'DBV Cable Lug'];
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', `<input type="text" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold" value="${tipe}" oninput="updatePushButtonValue(this.value, null)">`) +
-                        fieldWrap('Series', `
-                            <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                                <option value="">Pilih Series</option>
-                                ${options.map(opt => `<option value="${opt}" ${series === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                            </select>
-                        `);
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['SC Cable Lug', 'SV Cable Lug', 'RV Cable Lug', 'PTV Cable Lug', 'DBV Cable Lug'], series);
                 } else if (category === 'mccb accessories') {
-                    const tipe = parsedOld.tipe || '';
                     const series = parsedOld.series || '';
-                    const options = ['MAA Alarm Contact', 'MAS Shunt Release', 'MAAUX Auxiliary Contact', 'MAUVT Under Voltage', 'MARH Extended Rotary Handle'];
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', `<input type="text" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold" value="${tipe}" oninput="updatePushButtonValue(this.value, null)">`) +
-                        fieldWrap('Series', `
-                            <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                                <option value="">Pilih Series</option>
-                                ${options.map(opt => `<option value="${opt}" ${series === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                            </select>
-                        `);
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['MAA Alarm Contact', 'MAS Shunt Release', 'MAAUX Auxiliary Contact', 'MAUVT Under Voltage', 'MARH Extended Rotary Handle'], series);
                 } else if (category === 'contactor accessories') {
-                    const tipe = parsedOld.tipe || '';
                     const series = parsedOld.series || '';
-                    const options = ['Coil Contactor', 'Auxiliary Contact', 'Time Delay', 'Thermal Overload relay'];
-                    extraContainer.innerHTML = 
-                        fieldWrap('Type', `<input type="text" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold" value="${tipe}" oninput="updatePushButtonValue(this.value, null)">`) +
-                        fieldWrap('Series', `
-                            <select class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-bold" onchange="updatePushButtonValue(null, this.value)">
-                                <option value="">Pilih Series</option>
-                                ${options.map(opt => `<option value="${opt}" ${series === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                            </select>
-                        `);
-                } else if (['pilot lamp', 'accessories'].includes(category)) {
-                    const typedValue = parsedOld.tipe || (typeof oldValue === 'string' && !oldValue.startsWith('{') ? oldValue : '');
-                    extraContainer.innerHTML = fieldWrap('Type', `<input type="text" class="w-full px-5 py-3 bg-slate-50 border-0 rounded-2xl focus:ring-2 focus:ring-[#066c5f] font-semibold" value="${typedValue}" oninput="document.getElementById('custom_input').value = this.value">`);
-                    if (!customInputHidden.value || customInputHidden.value.startsWith('{')) {
-                        customInputHidden.value = typedValue;
-                    }
+                    extraContainer.innerHTML = renderSeriesSelect('Series', ['Coil Contactor', 'Auxiliary Contact', 'Time Delay', 'Thermal Overload relay'], series);
                 }
             }
 
-            if (oldCategory) renderExtraFields(oldCategory);
-            categorySelect.addEventListener('change', function() { renderExtraFields(this.options[this.selectedIndex].dataset.name); });
+            const initialCategoryName = categorySelect.options[categorySelect.selectedIndex]?.dataset?.name || '';
+            populateTypeOptions(categorySelect.value, categorySelect.value === initialCategoryId ? initialTypeId : '');
+            if (initialCategoryName) {
+                renderExtraFields(initialCategoryName);
+            }
+
+            categorySelect.addEventListener('change', function () {
+                const selectedOpt = this.options[this.selectedIndex];
+                const selectedCategoryId = this.value;
+                const selectedName = selectedOpt?.dataset?.name || '';
+                if (selectedCategoryId === initialCategoryId) {
+                    oldValue = originalCustomValue;
+                    parsedOld = parseLegacyJsonObject(originalCustomValue);
+                    customInputHidden.value = originalCustomValue;
+                } else {
+                    oldValue = '';
+                    parsedOld = {};
+                    customInputHidden.value = '';
+                }
+                populateTypeOptions(selectedCategoryId, selectedCategoryId === initialCategoryId ? initialTypeId : '');
+                renderExtraFields(selectedName);
+            });
         });
 
         document.addEventListener('DOMContentLoaded', function() {

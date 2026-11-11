@@ -17,6 +17,7 @@ class Product extends Model
         'stock',
         'kode',
         'category_id',
+        'type_id',
         'image',
         'optional_image',
         'datasheet',
@@ -88,5 +89,104 @@ class Product extends Model
     public function category()
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function type()
+    {
+        return $this->belongsTo(Type::class);
+    }
+
+    public function legacyTypeName(): ?string
+    {
+        if (blank($this->custom_input)) {
+            return null;
+        }
+
+        $decoded = json_decode((string) $this->custom_input, true);
+        if (is_array($decoded)) {
+            foreach (['tipe', 'type'] as $key) {
+                if (!empty($decoded[$key]) && is_string($decoded[$key])) {
+                    $trimmed = trim($decoded[$key]);
+                    if ($trimmed !== '') {
+                        return $trimmed;
+                    }
+                }
+            }
+
+            $categoryName = strtolower(trim((string) ($this->category?->name ?? '')));
+            if (!empty($decoded['value']) && is_string($decoded['value']) && $categoryName !== 'cable tray') {
+                $trimmed = trim($decoded['value']);
+                if ($trimmed !== '') {
+                    return $trimmed;
+                }
+            }
+
+            return null;
+        }
+
+        $categoryName = strtolower(trim((string) ($this->category?->name ?? '')));
+        if (in_array($categoryName, ['pilot lamp', 'accessories'], true)) {
+            $trimmed = trim((string) $this->custom_input);
+            return $trimmed !== '' ? $trimmed : null;
+        }
+
+        return null;
+    }
+
+    public function resolvedTypeName(): ?string
+    {
+        if ($this->type_id && $this->type) {
+            $trimmed = trim((string) $this->type->name);
+            if ($trimmed !== '') {
+                return $trimmed;
+            }
+        }
+
+        return $this->legacyTypeName();
+    }
+
+    public function resolvedSeriesName(): ?string
+    {
+        if (blank($this->custom_input)) {
+            return null;
+        }
+
+        $categoryName = strtolower(trim((string) ($this->category?->name ?? '')));
+        $decoded = json_decode((string) $this->custom_input, true);
+
+        if (is_array($decoded)) {
+            if (!empty($decoded['series']) && is_string($decoded['series'])) {
+                $trimmed = trim($decoded['series']);
+                if ($trimmed !== '') {
+                    return $trimmed;
+                }
+            }
+
+            if ($categoryName === 'cable tray' && !empty($decoded['value']) && is_string($decoded['value'])) {
+                $trimmed = trim($decoded['value']);
+                if ($trimmed !== '') {
+                    return $trimmed;
+                }
+            }
+
+            return null;
+        }
+
+        if ($categoryName === 'cable tray') {
+            $trimmed = trim((string) $this->custom_input);
+            return $trimmed !== '' ? $trimmed : null;
+        }
+
+        return null;
+    }
+
+    public function resolvedSubtitle(): ?string
+    {
+        $categoryName = strtolower(trim((string) ($this->category?->name ?? '')));
+        if ($categoryName === 'cable tray') {
+            return $this->resolvedSeriesName() ?: $this->resolvedTypeName();
+        }
+
+        return $this->resolvedTypeName();
     }
 }
